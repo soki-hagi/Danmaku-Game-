@@ -1,0 +1,327 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Danmaku Game!</title>
+<script src="js/three.js"></script>
+<script src="js/OrbitControls.js"></script>
+<script src="https://threejs.org/examples/fonts/helvetiker_regular.typeface.json"></script>
+
+<script>
+	document.addEventListener('DOMContentLoaded', exec);
+
+	var width = 960;
+	var height = 600;
+	var scene, camera, renderer, light;
+	var snowman, bullets = [];
+	var speed = 1;
+	var score = 0;
+	var hit = 0;
+	var hitMax = 3;
+	var isEnd = false;
+	var level = 1;
+	var levelTime = 20000; // 20 seconds
+	var levelUpInterval;
+	var bulletSpawnInterval;
+	var startTime, elapsedTime;
+	var timeTextMesh, levelTextMesh, hitTextMesh;
+	var fieldSize = 60;
+	var rankings = [];
+
+	function exec(){
+		// シーンを作る
+		scene = new THREE.Scene();
+		// ライトの設定
+		light = new THREE.SpotLight(0xffffff, 2, 200, Math.PI/4, 1);
+		light.position.set(0, 80, 120);
+		light.castShadow = true;
+		light.shadow.mapSize.width = 2048;
+		light.shadow.mapSize.height = 2048;
+		scene.add(light);
+
+		var amb_light = new THREE.AmbientLight(0xFFFFFF, 0.5);
+		scene.add(amb_light);
+
+		// 雪だるまを作る関数を呼ぶ
+		createSnowman();
+		snowman.position.set(0, -5, 0);
+
+		// 床面
+		var geometry1 = new THREE.BoxGeometry(120, 0.1, 120); 
+		var material1 = new THREE.MeshPhongMaterial({color: 0x77CC77});
+		var floor = new THREE.Mesh(geometry1, material1);
+		floor.position.set(0, -5, 0);
+		floor.receiveShadow = true;
+		scene.add(floor);
+
+		// カメラを設定
+		camera = new THREE.PerspectiveCamera(90, width/height, 1, 1000); 
+		camera.position.set(0, 50, 150);
+		camera.lookAt(scene.position);
+	
+		//レンダラを作成
+		renderer = new THREE.WebGLRenderer({canvas: document.getElementById('canvas1')});
+		renderer.setSize(width, height);
+
+		// レンダラで影を有効にする
+		renderer.shadowMap.enabled = true;
+
+		// カメラコントローラーを作成
+		var controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+		// 経過時間、レベル、ヒット数のテキストを作成
+		createTextMeshes();
+
+		reset();
+	}
+
+	function createSnowman() {
+		snowman = new THREE.Group();
+
+		var sphere1 = new THREE.SphereGeometry(5, 10, 10);  // サイズを半分に
+		var sphere2 = new THREE.SphereGeometry(4, 10, 10);  // サイズを半分に
+		var material = new THREE.MeshPhongMaterial({color: 0xFFFFFF});
+
+		var body = new THREE.Mesh(sphere1, material);
+		var head = new THREE.Mesh(sphere2, material);
+		body.position.y += 5;  // 調整
+		head.position.y += 13; // 調整
+		var cylinder = new THREE.CylinderGeometry(0.5, 2.5, 4, 10);  // サイズを半分に
+		var material2 = new THREE.MeshPhongMaterial({color: 0xFF3333});
+		var hat = new THREE.Mesh(cylinder, material2);
+		hat.rotation.z = -Math.PI/6;
+		hat.position.y += 17;  // 調整
+		hat.position.x += 2;   // 調整
+
+		body.castShadow = true;
+		head.castShadow = true;
+		hat.castShadow = true;
+
+		snowman.add(body);
+		snowman.add(head);
+		snowman.add(hat);
+		scene.add(snowman);
+	}
+
+	function createTextMeshes() {
+		var loader = new THREE.FontLoader();
+		loader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.json', function (font) {
+			// 経過時間のテキストメッシュ
+			var timeGeometry = new THREE.TextGeometry('Time: 0.00s', {
+				font: font,
+				size: 5,
+				height: 1,
+			});
+			var timeMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+			timeTextMesh = new THREE.Mesh(timeGeometry, timeMaterial);
+			timeTextMesh.position.set(55, -4.5, 55);
+			scene.add(timeTextMesh);
+
+			// レベルのテキストメッシュ
+			var levelGeometry = new THREE.TextGeometry('Level: 1', {
+				font: font,
+				size: 5,
+				height: 1,
+			});
+			var levelMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+			levelTextMesh = new THREE.Mesh(levelGeometry, levelMaterial);
+			levelTextMesh.position.set(55, -14.5, 55); // 経過時間の真下に表示
+			scene.add(levelTextMesh);
+
+			// ヒット数のテキストメッシュ
+			var hitGeometry = new THREE.TextGeometry('Hits: 0', {
+				font: font,
+				size: 5,
+				height: 1,
+			});
+			var hitMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+			hitTextMesh = new THREE.Mesh(hitGeometry, hitMaterial);
+			hitTextMesh.position.set(55, -24.5, 55); // レベルの真下に表示
+			scene.add(hitTextMesh);
+		});
+	}
+
+	function updateTimeText() {
+		var loader = new THREE.FontLoader();
+		loader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.json', function (font) {
+			var geometry = new THREE.TextGeometry('Time: ' + elapsedTime.toFixed(2) + 's', {
+				font: font,
+				size: 5,
+				height: 1,
+			});
+			timeTextMesh.geometry.dispose();
+			timeTextMesh.geometry = geometry;
+		});
+	}
+
+	function updateLevelText() {
+		var loader = new THREE.FontLoader();
+		loader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.json', function (font) {
+			var geometry = new THREE.TextGeometry('Level: ' + level, {
+				font: font,
+				size: 5,
+				height: 1,
+			});
+			levelTextMesh.geometry.dispose();
+			levelTextMesh.geometry = geometry;
+		});
+	}
+
+	function updateHitText() {
+		var loader = new THREE.FontLoader();
+		loader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.json', function (font) {
+			var geometry = new THREE.TextGeometry('Hits: ' + hit, {
+				font: font,
+				size: 5,
+				height: 1,
+			});
+			hitTextMesh.geometry.dispose();
+			hitTextMesh.geometry = geometry;
+		});
+	}
+
+	function spawnBullet() {
+		var geometry = new THREE.SphereGeometry(2, 8, 8);
+		var material = new THREE.MeshPhongMaterial({ color: Math.random() * 0xffffff });
+		var bullet = new THREE.Mesh(geometry, material);
+
+		var spawnEdge = Math.floor(Math.random() * 4);
+		switch (spawnEdge) {
+			case 0: bullet.position.set(-70, 0, Math.random() * 120 - 60); break; // left
+			case 1: bullet.position.set(70, 0, Math.random() * 120 - 60); break;  // right
+			case 2: bullet.position.set(Math.random() * 120 - 60, 0, -70); break; // bottom
+			case 3: bullet.position.set(Math.random() * 120 - 60, 0, 70); break;  // top
+		}
+		bullet.direction = new THREE.Vector3(Math.random() * 2 - 1, 0, Math.random() * 2 - 1).normalize();
+		scene.add(bullet);
+		bullets.push(bullet);
+	}
+
+	function updateBullets() {
+		bullets.forEach(bullet => {
+			bullet.position.add(bullet.direction.clone().multiplyScalar(0.5 + level * 0.5));
+			if (bullet.position.distanceTo(snowman.position) < 10) {  // 当たり判定を広げる
+				scene.remove(bullet);
+				bullets = bullets.filter(b => b !== bullet);
+				hit++;
+				updateHitText();
+				if (hit >= hitMax) {
+					isEnd = true;
+					clearInterval(levelUpInterval);
+					clearInterval(bulletSpawnInterval);
+					document.getElementById("end").innerHTML = '<font color="red">Game Over</font>';
+				}
+			}
+		});
+		bullets = bullets.filter(bullet => bullet.position.length() < 200);
+	}
+
+	function levelUp() {
+		level++;
+		if (level > 3) level = 3;
+		updateLevelText();
+		clearInterval(bulletSpawnInterval);
+		bulletSpawnInterval = setInterval(spawnBulletsForLevel, 1000 / level);
+	}
+
+	function spawnBulletsForLevel() {
+		let bulletCount;
+		if (level === 1) {
+			bulletCount = 1.5;
+		} else if (level === 3) {
+			bulletCount = 4.5;  // level 3 should be 1.5 times of level 2 which is 3
+		} else {
+			bulletCount = level;
+		}
+		for (let i = 0; i < Math.ceil(bulletCount); i++) {
+			spawnBullet();
+		}
+	}
+
+	function update() {
+		if (!isEnd) {
+			updateBullets();
+			moveSnowman();
+			renderer.render(scene, camera);
+			elapsedTime = (Date.now() - startTime) / 1000;
+			updateTimeText();
+			requestAnimationFrame(update);
+		}
+	}
+
+	function moveSnowman() {
+		var speed = 1;
+		if (keys['w'] && snowman.position.z > -fieldSize) snowman.position.z -= speed;
+		if (keys['s'] && snowman.position.z < fieldSize) snowman.position.z += speed;
+		if (keys['a'] && snowman.position.x > -fieldSize) snowman.position.x -= speed;
+		if (keys['d'] && snowman.position.x < fieldSize) snowman.position.x += speed;
+	}
+
+	function reset() {
+		if (isEnd) {
+			rankings.push(elapsedTime.toFixed(2) + 's');
+			updateRankings();
+		}
+		hit = 0;
+		score = 0;
+		level = 1;
+		isEnd = false;
+		bullets.forEach(bullet => scene.remove(bullet));
+		bullets = [];
+		snowman.position.set(0, -5, 0);
+		document.getElementById("end").innerHTML = "";
+		document.getElementById("level").innerHTML = "Level: 1";
+		startTime = Date.now();
+		clearInterval(levelUpInterval);
+		clearInterval(bulletSpawnInterval);
+		levelUpInterval = setInterval(levelUp, levelTime);
+		bulletSpawnInterval = setInterval(spawnBulletsForLevel, 1000 / level);
+		updateLevelText();
+		updateTimeText();
+		updateHitText();
+		setTimeout(function() {
+			isEnd = false;
+			update();
+		}, 100); // 少し遅延を入れてからupdate関数を呼び出す
+	}
+
+	function updateRankings() {
+		rankings.sort((a, b) => parseFloat(b) - parseFloat(a));
+		var rankingsHTML = "<h3>Rankings</h3><ol>";
+		for (var i = 0; i < rankings.length; i++) {
+			rankingsHTML += "<li>" + rankings[i] + "</li>";
+		}
+		rankingsHTML += "</ol>";
+		document.getElementById("rankings").innerHTML = rankingsHTML;
+	}
+
+	var keys = {};
+	document.addEventListener('keydown', function(e) {
+		keys[e.key.toLowerCase()] = true;
+		if (e.key.toLowerCase() === 'r') {
+			reset();
+		}
+	});
+
+	document.addEventListener('keyup', function(e) {
+		keys[e.key.toLowerCase()] = false;
+	});
+
+</script>
+
+</head>
+
+<body>
+<h1>弾幕げーむ！</h1>
+
+<canvas id="canvas1" style="width: 960px; height: 600px;"></canvas>
+<p id="jump"></p>
+<p><span id="level"></span></p>
+<p><span id="time"></span></p>
+<p><span id="end"></span></p>
+<p>WASDキーで雪だるまを動かして、弾を避けてください！</p>
+<p><span id="hits"></span></p>
+<p>Rキーでリスタートできます。</p>
+<div id="rankings"></div>
+</body>
+</html>
